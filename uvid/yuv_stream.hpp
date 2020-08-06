@@ -56,6 +56,9 @@ public:
             x = width/chroma_ratio_x-1;
         return Cr_data.at(y*width/chroma_ratio_x + x);
     }
+
+
+
 private:
     unsigned int width, height;
     std::vector<unsigned char> Y_data, Cb_data, Cr_data;
