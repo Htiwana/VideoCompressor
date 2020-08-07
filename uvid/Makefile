@@ -1,4 +1,4 @@
-EXTRA_CXXFLAGS=
+EXTRA_CXXFLAGS= -g
 CXXFLAGS=-O3 -Wall -std=c++17 $(EXTRA_CXXFLAGS)
 
 all: uvid_compress uvid_decompress

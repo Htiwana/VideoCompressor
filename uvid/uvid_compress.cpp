@@ -161,7 +161,7 @@ std::vector<std::vector<double>> transpose( std::vector<std::vector<double>> a){
 
 
 //reads plane in 8x8 blocks,  performs DCT on each blocks and puts quantized values in transformation
-std::vector<std::vector<double>> DCT(std::vector<std::vector<unsigned char>> plane, unsigned int height, unsigned int width, int channel, double q_factor){
+std::vector<std::vector<double>> DCT(std::vector<std::vector<double>> plane, unsigned int height, unsigned int width, int channel, double q_factor){
     std::vector<std::vector<double>> quantizer =  ((channel==0)?Y_quant:C_quant);
 
     auto block = create_2d_vector<double>(8,8);
@@ -194,7 +194,71 @@ std::vector<std::vector<double>> DCT(std::vector<std::vector<unsigned char>> pla
     return transformation;
 }
 
+std::vector<std::vector<double>> reverse_DCT(std::vector<std::vector<double>> plane, unsigned int height, unsigned int width, int channel, double q_factor){
+    std::vector<std::vector<double>> quantizer =  ((channel==0)?Y_quant:C_quant);
+
+    auto block = create_2d_vector<double>(8,8);
+    std::vector<std::vector<double>> transformation = create_2d_vector<double>(height,width);
+
+    //read as 8x8 blocks
+    double val = 0;
+    for(unsigned int y = 0; y < height; y+=8){
+        for (unsigned int x = 0; x < width; x+=8){
+            for(unsigned int i = 0; i < 8; i++){
+                for(unsigned int j = 0; j < 8; j++){ 
+                    if(((y+i)>=height || (x+j) >=width))//only updates within image and previous pixel value gets reused outside. so takes care of padding ? 
+                        break;
+                    val = plane.at(y+i).at(x+j);   
+                    block.at(i).at(j) = val*(quantizer[i][j]*q_factor);
+                }
+            }
+            //DCT on block
+            auto DCT = multiply(transpose(DCT_matrix),block);
+            DCT = multiply(DCT,DCT_matrix);
+            for(unsigned int i = 0; i < 8; i++){
+                for(unsigned int j = 0; j < 8; j++){
+                    if((y+i)>=height || (x+j) >= width)
+                        break; 
+                    transformation.at(y+i).at(x+j) = std::round(DCT.at(i).at(j));
+                }
+            }
+        }
+    }
+
+    return transformation;
+}
+
+std::vector<std::vector<double>> minus(std::vector<std::vector<double>> A, std::vector<std::vector<double>> B){
+    std::vector<std::vector<double>> result = create_2d_vector<double>(A.size(),A.at(0).size());
+
+    assert(A.size()==B.size());
+    for(unsigned int i =0; i<A.size(); i++)
+        for(unsigned int j =0; j<A.at(0).size(); j++)
+            result.at(i).at(j) = A.at(i).at(j) - B.at(i).at(j);
+
+    return result;
+}
+
+std::vector<std::vector<double>> plus(std::vector<std::vector<double>> A, std::vector<std::vector<double>> B){
+    std::vector<std::vector<double>> result = create_2d_vector<double>(A.size(),A.at(0).size());
+
+    for(unsigned int i =0; i<A.size(); i++)
+        for(unsigned int j =0; j<A.at(0).size(); j++)
+            result.at(i).at(j) = A.at(i).at(j) + B.at(i).at(j);
+
+    return result;
+}
+
 int main(int argc, char** argv){
+
+
+    std::ofstream myfile;
+    myfile.open ("debug.txt");
+
+    std::ofstream myfile2;
+    myfile2.open ("debug_after.txt");
+    
+    
 
     if (argc < 4){
         std::cerr << "Usage: " << argv[0] << " <width> <height> <low/medium/high>" << std::endl;
@@ -211,33 +275,63 @@ int main(int argc, char** argv){
     output_stream.push_u32(height);
     output_stream.push_u32(width);
 
+    unsigned int frame_type =0;
+    unsigned int frame_num =0;
+
+    auto last_Y = create_2d_vector<double>(height,width);
+    auto last_Cb = create_2d_vector<double>(height/2,width/2);
+    auto last_Cr = create_2d_vector<double>(height/2,width/2);
     while (reader.read_next_frame()){
+
+        frame_num++;
+        frame_type = (frame_num%5==0)?0:1;// 0 = I frame, 1 = P frame 
+
         output_stream.push_byte(1); //Use a one byte flag to indicate whether there is a frame here
         YUVFrame420& frame = reader.frame();
+        output_stream.push_byte(frame_type);
 
+        
+        auto Y = create_2d_vector<double>(height,width);
+        auto Cb = create_2d_vector<double>(height/2,width/2);
+        auto Cr = create_2d_vector<double>(height/2,width/2);
 
         //Extract the Y plane into its own array 
-        auto Y = create_2d_vector<unsigned char>(height,width);
+        auto OG_Y = create_2d_vector<double>(height,width);
         for(unsigned int y = 0; y < height; y++)
             for (unsigned int x = 0; x < width; x++)
-                Y.at(y).at(x) = frame.Y(x,y);
-
-        //Extract the Y plane into its own array 
-        auto Cb = create_2d_vector<unsigned char>(height,width);
+                OG_Y.at(y).at(x) = frame.Y(x,y);
+        
+        //Extract the Cb plane into its own array 
+        auto OG_Cb = create_2d_vector<double>(height/2,width/2);
         for(unsigned int y = 0; y < height/2; y++)
             for (unsigned int x = 0; x < width/2; x++)
-                Cb.at(y).at(x) = frame.Cb(x,y);
+                OG_Cb.at(y).at(x) = frame.Cb(x,y);
 
-        //Extract the Cr plane into its own array and scale
-        auto Cr = create_2d_vector<unsigned char>(height,width);
+        //Extract the Cr plane into its own array
+        auto OG_Cr = create_2d_vector<double>(height/2,width/2);
         for(unsigned int y = 0; y < height/2; y++)
             for (unsigned int x = 0; x < width/2; x++)
-                Cr.at(y).at(x) = frame.Cr(x,y);
+                OG_Cr.at(y).at(x) = frame.Cr(x,y);
+
+
+        if(frame_type){//if p frame
+            Y = minus(OG_Y,last_Y);
+            Cb = minus(OG_Cb,last_Cb);
+            Cr = minus(OG_Cr,last_Cr);
+        }else{
+            Y = OG_Y;
+            Cb = OG_Cb;
+            Cr = OG_Cr;
+        }
+
+
 
         //DCT for each plane
         auto DCT_Y = DCT(Y,height,width,0,1);
-        auto DCT_Cb = DCT(Cb,height/2,width/2,1,1);
-        auto DCT_Cr = DCT(Cr,height/2,width/2,2,1);
+
+        auto DCT_Cb = DCT(Cb,(height+1)/2,(width+1)/2,1,1);
+        auto DCT_Cr = DCT(Cr,(height+1)/2,(width+1)/2,1,1);
+
 
         auto ZigZag_Y = ZigZagOrder(DCT_Y,height,width);
         auto ZigZag_Cb = ZigZagOrder(DCT_Cb,(height+1)/2,(width+1)/2);
@@ -299,20 +393,26 @@ int main(int argc, char** argv){
             output_stream.push_bits((unsigned int)val,bits);
         }
 
+        //compute last frame vlaues that decompressor will see by doing and undoing DCT
+        OG_Y = DCT(OG_Y,height,width,0,1);
+        last_Y = reverse_DCT(OG_Y,height,width,0,1);
+        
 
-        // for (u32 y = 0; y < height; y++)
-        //     for (u32 x = 0; x < width; x++)
-        //         output_stream.push_byte(frame.Y(x,y));
-        // for (u32 y = 0; y < height/2; y++)
-        //     for (u32 x = 0; x < width/2; x++)
-        //         output_stream.push_byte(frame.Cb(x,y));
-        // for (u32 y = 0; y < height/2; y++)
-        //     for (u32 x = 0; x < width/2; x++)
-        //         output_stream.push_byte(frame.Cr(x,y));
+        //last_Cb = OG_Cb;
+        OG_Cb = DCT(OG_Cb,(height+1)/2,(width+1)/2,1,1);
+        last_Cb = reverse_DCT(OG_Cb,(height+1)/2,(width+1)/2,1,1);
+        
+
+        //last_Cr = OG_Cr;
+        OG_Cr = DCT(OG_Cr,(height+1)/2,(width+1)/2,1,1);
+        last_Cr = reverse_DCT(OG_Cr,(height+1)/2,(width+1)/2,1,1);
+
     }
 
     output_stream.push_byte(0); //Flag to indicate end of data
     output_stream.flush_to_byte();
+    myfile.close();
+    myfile2.close();
 
     return 0;
 }

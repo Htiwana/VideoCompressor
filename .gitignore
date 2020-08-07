@@ -1,1 +1,13 @@
 uvid/decompressed.y4m
+uvid/uvid_decompress.o
+uvid/compressed.uvi
+uvid/debug_after.txt
+uvid/debug.csv
+uvid/debug.txt
+uvid/input
+uvid/input.i
+uvid/jattput
+uvid/uvid_compress
+uvid/uvid_compress.o
+uvid/uvid_decompress
+uvid/.vscode/settings.json

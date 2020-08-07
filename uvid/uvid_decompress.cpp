@@ -208,6 +208,16 @@ unsigned char clamp (double val){
     }
 }
 
+std::vector<std::vector<double>> plus(std::vector<std::vector<double>> A, std::vector<std::vector<double>> B){
+    std::vector<std::vector<double>> result = create_2d_vector<double>(A.size(),A.at(0).size());
+
+    for(unsigned int i =0; i<A.size(); i++)
+        for(unsigned int j =0; j<A.at(0).size(); j++)
+            result.at(i).at(j) = A.at(i).at(j) + B.at(i).at(j);
+
+    return result;
+}
+
 int main(int argc, char** argv){
 
     //Note: This program must not take any command line arguments. (Anything
@@ -220,8 +230,15 @@ int main(int argc, char** argv){
 
     YUVStreamWriter writer {std::cout, width, height};
 
+    auto last_Y = create_2d_vector<double>(height,width);
+    auto last_Cb = create_2d_vector<double>(height/2,width/2);
+    auto last_Cr = create_2d_vector<double>(height/2,width/2);
+    
     while (input_stream.read_byte()){
         YUVFrame420& frame = writer.frame();
+        unsigned int frame_type = input_stream.read_byte();
+
+
 
         unsigned int ZigZag_Y_size = input_stream.read_u32();
         unsigned int ZigZag_Cb_size = input_stream.read_u32();
@@ -235,6 +252,8 @@ int main(int argc, char** argv){
         std::vector<double> ZigZag_Y;
         std::vector<double> ZigZag_Cb;
         std::vector<double> ZigZag_Cr;
+
+
 
         for(unsigned int i =0; i<ZigZag_Y_size; i++){
             unsigned int sign = input_stream.read_bit();
@@ -283,6 +302,14 @@ int main(int argc, char** argv){
         Cr_scaled = reverse_DCT(Cr_scaled,(height+1)/2,(width+1)/2,1,1);
 
 
+        if(frame_type){//if p frame
+            Y = plus(Y,last_Y);
+            Cr_scaled = plus(Cr_scaled,last_Cr);
+            Cb_scaled = plus(Cb_scaled,last_Cb);
+        }
+            
+        
+
         for (u32 y = 0; y < height; y++)
             for (u32 x = 0; x < width; x++)
                 frame.Y(x,y) = clamp(Y.at(y).at(x));
@@ -293,6 +320,10 @@ int main(int argc, char** argv){
             for (u32 x = 0; x < width/2; x++)
                 frame.Cr(x,y) = clamp(Cr_scaled.at(y).at(x));
         writer.write_frame();
+
+        last_Y = Y;
+        last_Cb = Cb_scaled;
+        last_Cr = Cr_scaled;
     }
 
 
