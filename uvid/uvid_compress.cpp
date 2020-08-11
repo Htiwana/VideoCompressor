@@ -28,6 +28,8 @@
 #include "bitmap_image.hpp"
 #include "uvg_common.hpp"
 
+OutputBitStream output_stream {std::cout};
+
 //https://www.mathworks.com/help/images/ref/dctmtx.html
 std::vector<std::vector<double>> DCT_matrix  = {{ 0.3536,  0.3536,  0.3536,  0.3536,  0.3536,  0.3536,  0.3536,  0.3536}, 
                                                 { 0.4904,  0.4157,  0.2778,  0.0975, -0.0975, -0.2778, -0.4157, -0.4904}, 
@@ -239,6 +241,9 @@ std::vector<std::vector<double>> minus(std::vector<std::vector<double>> A, std::
     return result;
 }
 
+
+
+
 std::vector<std::vector<double>> plus(std::vector<std::vector<double>> A, std::vector<std::vector<double>> B){
     std::vector<std::vector<double>> result = create_2d_vector<double>(A.size(),A.at(0).size());
 
@@ -249,16 +254,47 @@ std::vector<std::vector<double>> plus(std::vector<std::vector<double>> A, std::v
     return result;
 }
 
+
+int write_variable_bits(int val){
+
+    unsigned int sign = (val<0)?1:0;
+
+    output_stream.push_bit(sign);
+    val = (val<0)?(val*-1):val;
+
+    unsigned int bits = ceil(log2(val));
+    bits = (!(val & (val -1)))?bits+1:bits;//if power of two then one more bit than log 2 https://stackoverflow.com/questions/108318/whats-the-simplest-way-to-test-whether-a-number-is-a-power-of-2-in-c
+    
+    for(unsigned int i = 0; i < bits; i++)
+        output_stream.push_bit(1);
+    output_stream.push_bit(0);
+    output_stream.push_bits((unsigned int)val,bits);
+
+    return bits;
+}
+
+
+int rle(int index, std::vector<double> vec){
+
+    int cur_block = index/64;
+    int block_end = (cur_block+1)*64;
+
+    int run_length=0;
+    for(int i = index+1; i< block_end; i++){
+        if(vec.at(i)==vec.at(index)){
+            run_length++;
+        }else{
+            return run_length;
+        }
+    }
+
+    return run_length;
+}
+
 int main(int argc, char** argv){
 
-
-    std::ofstream myfile;
-    myfile.open ("debug.txt");
-
-    std::ofstream myfile2;
-    myfile2.open ("debug_after.txt");
-    
-    
+    std::ofstream debugfile;
+    debugfile.open ("debug_.txt");
 
     if (argc < 4){
         std::cerr << "Usage: " << argv[0] << " <width> <height> <low/medium/high>" << std::endl;
@@ -269,7 +305,6 @@ int main(int argc, char** argv){
     std::string quality{argv[3]};
 
     YUVStreamReader reader {std::cin, width, height};
-    OutputBitStream output_stream {std::cout};
 
 
     output_stream.push_u32(height);
@@ -281,14 +316,17 @@ int main(int argc, char** argv){
     auto last_Y = create_2d_vector<double>(height,width);
     auto last_Cb = create_2d_vector<double>(height/2,width/2);
     auto last_Cr = create_2d_vector<double>(height/2,width/2);
+
     while (reader.read_next_frame()){
 
         frame_num++;
-        frame_type = (frame_num%5==0)?0:1;// 0 = I frame, 1 = P frame 
+        frame_type = (frame_num%5==0)?0:1;// 0 = I frame, 1 = P frame
+        //frame_type =0;
 
         output_stream.push_byte(1); //Use a one byte flag to indicate whether there is a frame here
+        
         YUVFrame420& frame = reader.frame();
-        output_stream.push_byte(frame_type);
+        output_stream.push_bits(frame_type,2);
 
         
         auto Y = create_2d_vector<double>(height,width);
@@ -313,8 +351,8 @@ int main(int argc, char** argv){
             for (unsigned int x = 0; x < width/2; x++)
                 OG_Cr.at(y).at(x) = frame.Cr(x,y);
 
-
-        if(frame_type){//if p frame
+        
+        if(frame_type){//if p frame        
             Y = minus(OG_Y,last_Y);
             Cb = minus(OG_Cb,last_Cb);
             Cr = minus(OG_Cr,last_Cr);
@@ -323,87 +361,55 @@ int main(int argc, char** argv){
             Cb = OG_Cb;
             Cr = OG_Cr;
         }
-
-
-
+        
         //DCT for each plane
-        auto DCT_Y = DCT(Y,height,width,0,1);
-
+        auto DCT_Y = DCT(Y,height,width,0,1);     
         auto DCT_Cb = DCT(Cb,(height+1)/2,(width+1)/2,1,1);
         auto DCT_Cr = DCT(Cr,(height+1)/2,(width+1)/2,1,1);
 
 
-        auto ZigZag_Y = ZigZagOrder(DCT_Y,height,width);
+        auto ZigZag_Y = ZigZagOrder(DCT_Y,height,width);        
         auto ZigZag_Cb = ZigZagOrder(DCT_Cb,(height+1)/2,(width+1)/2);
         auto ZigZag_Cr = ZigZagOrder(DCT_Cr,(height+1)/2,(width+1)/2);
-        output_stream.push_u32(ZigZag_Y.size());
-        output_stream.push_u32(ZigZag_Cb.size());
-        output_stream.push_u32(ZigZag_Cr.size());
+
+        write_variable_bits(ZigZag_Y.size());
+        write_variable_bits(ZigZag_Cb.size());
+        write_variable_bits(ZigZag_Cr.size());
 
 
+        //compute deltas
+        // for(unsigned int i =1; i<ZigZag_Y.size(); i++){
+        //     if(i%64>4)
+        //         ZigZag_Y.at(i) = ZigZag_Y.at(i)-ZigZag_Y.at(i-1);
+        // }
 
-        //Write ZigZag Y values in variable bit format
+        //Write ZigZag values in variable bit format
         for(unsigned int i =0; i<ZigZag_Y.size(); i++){
-            int val = ZigZag_Y.at(i);
-            unsigned int sign = (val<0)?1:0;
+            int val = std::round(ZigZag_Y.at(i));
+            write_variable_bits(val);
 
-            output_stream.push_bit(sign);
-            val = (val<0)?(val*-1):val;
-
-            unsigned int bits = ceil(log2(val));
-            bits = (!(val & (val -1)))?bits+1:bits;//if power of two then one more bit than log 2 https://stackoverflow.com/questions/108318/whats-the-simplest-way-to-test-whether-a-number-is-a-power-of-2-in-c
-
-            for(unsigned int i = 0; i < bits; i++)
-                output_stream.push_bit(1);
-            output_stream.push_bit(0);
-            output_stream.push_bits((unsigned int)val,bits);
+            //rle
+            // if(val==0){
+            //     int rl = rle(i,ZigZag_Y);
+            //     if(frame_num==2)
+            //         debugfile2 << "run: " << rl << std::endl;
+            //     write_variable_bits(rl);
+            //     i+= rl;
+            // }
         }
 
-        //Write ZigZag Cb values in variable bits
-        for(unsigned int i =0; i<ZigZag_Cb.size(); i++){
-            int val = ZigZag_Cb.at(i);
-            unsigned int sign = (val<0)?1:0;
-
-            output_stream.push_bit(sign);
-            val = (val<0)?(val*-1):val;
-
-            unsigned int bits = ceil(log2(val));
-            bits = (!(val & (val -1)))?bits+1:bits;//if power of two then one more bit than log 2 https://stackoverflow.com/questions/108318/whats-the-simplest-way-to-test-whether-a-number-is-a-power-of-2-in-c
-
-            for(unsigned int i = 0; i < bits; i++)
-                output_stream.push_bit(1);
-            output_stream.push_bit(0);
-            output_stream.push_bits((unsigned int)val,bits);
-        }
-        
-        //Write ZigZag Cr values in variable bits 
-        for(unsigned int i =0; i<ZigZag_Cr.size(); i++){
-            int val = ZigZag_Cr.at(i);
-            unsigned int sign = (val<0)?1:0;
-
-            output_stream.push_bit(sign);
-            val = (val<0)?(val*-1):val;
-
-            unsigned int bits = ceil(log2(val));
-            bits = (!(val & (val -1)))?bits+1:bits;//if power of two then one more bit than log 2 https://stackoverflow.com/questions/108318/whats-the-simplest-way-to-test-whether-a-number-is-a-power-of-2-in-c
-
-            for(unsigned int i = 0; i < bits; i++)
-                output_stream.push_bit(1);
-            output_stream.push_bit(0);
-            output_stream.push_bits((unsigned int)val,bits);
-        }
+        for(unsigned int i =0; i<ZigZag_Cb.size(); i++)
+            write_variable_bits(std::round(ZigZag_Cb.at(i)));
+        for(unsigned int i =0; i<ZigZag_Cr.size(); i++)
+            write_variable_bits(std::round(ZigZag_Cr.at(i)));
 
         //compute last frame vlaues that decompressor will see by doing and undoing DCT
         OG_Y = DCT(OG_Y,height,width,0,1);
         last_Y = reverse_DCT(OG_Y,height,width,0,1);
-        
 
-        //last_Cb = OG_Cb;
         OG_Cb = DCT(OG_Cb,(height+1)/2,(width+1)/2,1,1);
         last_Cb = reverse_DCT(OG_Cb,(height+1)/2,(width+1)/2,1,1);
-        
 
-        //last_Cr = OG_Cr;
         OG_Cr = DCT(OG_Cr,(height+1)/2,(width+1)/2,1,1);
         last_Cr = reverse_DCT(OG_Cr,(height+1)/2,(width+1)/2,1,1);
 
@@ -411,8 +417,7 @@ int main(int argc, char** argv){
 
     output_stream.push_byte(0); //Flag to indicate end of data
     output_stream.flush_to_byte();
-    myfile.close();
-    myfile2.close();
+    debugfile.close();
 
     return 0;
 }

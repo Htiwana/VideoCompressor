@@ -28,6 +28,9 @@
 #include "yuv_stream.hpp"
 #include "uvg_common.hpp"
 
+
+InputBitStream input_stream {std::cin};
+
 std::vector<std::vector<double>> DCT_matrix  = {{ 0.3536,  0.3536,  0.3536,  0.3536,  0.3536,  0.3536,  0.3536,  0.3536}, 
                                                 { 0.4904,  0.4157,  0.2778,  0.0975, -0.0975, -0.2778, -0.4157, -0.4904}, 
                                                 { 0.4619,  0.1913, -0.1913, -0.4619, -0.4619, -0.1913,  0.1913,  0.4619}, 
@@ -218,12 +221,27 @@ std::vector<std::vector<double>> plus(std::vector<std::vector<double>> A, std::v
     return result;
 }
 
+int read_variable_bits(){
+
+    unsigned int sign = input_stream.read_bit();
+
+    unsigned int bits = 0;
+    while (input_stream.read_bit())
+        bits++;
+
+    int val = input_stream.read_bits(bits);
+    val = (sign==0)?val:(val*-1);
+
+
+    return val;
+}
+
 int main(int argc, char** argv){
 
     //Note: This program must not take any command line arguments. (Anything
     //      it needs to know about the data must be encoded into the bitstream)
     
-    InputBitStream input_stream {std::cin};
+    
 
     u32 height {input_stream.read_u32()};
     u32 width {input_stream.read_u32()};
@@ -234,15 +252,21 @@ int main(int argc, char** argv){
     auto last_Cb = create_2d_vector<double>(height/2,width/2);
     auto last_Cr = create_2d_vector<double>(height/2,width/2);
     
+    unsigned int frame_num =0;
+
     while (input_stream.read_byte()){
         YUVFrame420& frame = writer.frame();
-        unsigned int frame_type = input_stream.read_byte();
+        frame_num++;
 
+        unsigned int frame_type = input_stream.read_bits(2);
 
+        //unsigned int ZigZag_Y_size = input_stream.read_u32();
 
-        unsigned int ZigZag_Y_size = input_stream.read_u32();
-        unsigned int ZigZag_Cb_size = input_stream.read_u32();
-        unsigned int ZigZag_Cr_size = input_stream.read_u32();
+        unsigned int ZigZag_Y_size = read_variable_bits();
+        unsigned int ZigZag_Cb_size = read_variable_bits();
+        unsigned int ZigZag_Cr_size = read_variable_bits();
+        //unsigned int ZigZag_Cb_size = input_stream.read_u32();
+        //unsigned int ZigZag_Cr_size = input_stream.read_u32();
 
         auto Y = create_2d_vector<double>(height,width);
         auto Cb_scaled = create_2d_vector<double>((height+1)/2,(width+1)/2);
@@ -253,42 +277,40 @@ int main(int argc, char** argv){
         std::vector<double> ZigZag_Cb;
         std::vector<double> ZigZag_Cr;
 
+        std::ofstream debugfile;
+        debugfile.open ("decode_debug_.txt");
 
 
         for(unsigned int i =0; i<ZigZag_Y_size; i++){
-            unsigned int sign = input_stream.read_bit();
-
-            unsigned int bits = 0;
-            while (input_stream.read_bit())
-                bits++;
-
-            int val = input_stream.read_bits(bits);
-            val = (sign==0)?val:(val*-1);
+            int val = read_variable_bits();
             ZigZag_Y.push_back(val);
+
+            //rle
+            // if(val==0){
+            //     int rl = read_variable_bits();
+            //     if(frame_num==2)
+            //         debugfile << "run: " << rl << std::endl;
+            //     for(int j =0; j<rl; j++){
+            //         ZigZag_Y.push_back(val);
+            //         i++;
+            //     }
+                
+            // }
+
+            
         }
 
+        // for(unsigned int i =1; i<ZigZag_Y.size(); i++){
+        //     if(i%64>4)
+        //         ZigZag_Y.at(i) = ZigZag_Y.at(i)+ZigZag_Y.at(i-1);
+        // }
 
         for(unsigned int i =0; i<ZigZag_Cb_size; i++){
-            unsigned int sign = input_stream.read_bit();
-            
-            unsigned int bits = 0;
-            while (input_stream.read_bit())
-                bits++;
-
-            int val = input_stream.read_bits(bits);
-            val = (sign==0)?val:(val*-1);
+            int val = read_variable_bits();
             ZigZag_Cb.push_back(val);
         }
-
         for(unsigned int i =0; i<ZigZag_Cr_size; i++){
-            unsigned int sign = input_stream.read_bit();
-            
-            unsigned int bits = 0;
-            while (input_stream.read_bit())
-                bits++;
-
-            int val = input_stream.read_bits(bits);
-            val = (sign==0)?val:(val*-1);
+            int val = read_variable_bits();
             ZigZag_Cr.push_back(val);
         }
     
@@ -307,8 +329,6 @@ int main(int argc, char** argv){
             Cr_scaled = plus(Cr_scaled,last_Cr);
             Cb_scaled = plus(Cb_scaled,last_Cb);
         }
-            
-        
 
         for (u32 y = 0; y < height; y++)
             for (u32 x = 0; x < width; x++)
