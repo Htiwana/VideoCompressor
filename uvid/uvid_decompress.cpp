@@ -337,21 +337,27 @@ int main(int argc, char** argv){
         Cr_scaled = reverse_DCT(Cr_scaled,(height+1)/2,(width+1)/2,1,1);
 
         auto OG_Y = Y;
+        auto OG_Cb = Cb_scaled;
+        auto OG_Cr = Cr_scaled;
         if(frame_type){//if p frame
             Y = plus(Y,last_Y);
             Cr_scaled = plus(Cr_scaled,last_Cr);
             Cb_scaled = plus(Cb_scaled,last_Cb);
         }
 
+        int mblock_size = 16;
+        
         for(auto v: motion_vectors){
             int y = v.at(0);
             int x = v.at(1);
             int v_y = v.at(2);
             int v_x = v.at(3);
             
-            for(unsigned int k = 0; k<8; k++){
-                for(unsigned int l = 0; l < 8; l++){
-                    Y.at(y+k).at(x+l) = OG_Y.at(y+k).at(x+l)+last_Y.at(y+v_y+k).at(x+v_x+l);
+            for(unsigned int k = 0; k<mblock_size; k++){
+                for(unsigned int l = 0; l < mblock_size; l++){
+                    Y.at(y+k).at(x+l) = OG_Y.at(y+k).at(x+l) + last_Y.at(y+v_y+k).at(x+v_x+l);
+                    Cb_scaled.at((y+k)/2).at((x+l)/2) = OG_Cb.at((y+k)/2).at((x+l)/2) + last_Cb.at(((y+v_y+k)/2)).at(((x+v_x+l)/2));
+                    Cr_scaled.at((y+k)/2).at((x+l)/2) = OG_Cr.at((y+k)/2).at((x+l)/2) + last_Cr.at(((y+v_y+k)/2)).at(((x+v_x+l)/2));
                 }
             }
         }

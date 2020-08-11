@@ -327,8 +327,8 @@ int main(int argc, char** argv){
     while (reader.read_next_frame()){
 
         frame_num++;
-        frame_type = (frame_num%5==0)?0:1;// 0 = I frame, 1 = P frame
-        //frame_type =0;
+        frame_type = (frame_num%6==0)?0:1;// 0 = I frame, 1 = P frame
+        //frame_type =1;
 
         output_stream.push_byte(1); //Use a one byte flag to indicate whether there is a frame here
         
@@ -366,23 +366,24 @@ int main(int argc, char** argv){
         //for each block go 
 
         debugfile << "FRAME"<< std::endl;        
-
+        int mblock_size = 16;
+        int search_radius =4;
         std::vector<std::vector<int>> motion_vectors;
-        for(unsigned int y = 64; y < (height-64); y+=8){
-            for (unsigned int x = 64; x < (width-64); x+=8){
+        for(unsigned int y = mblock_size*search_radius; y < (height-(mblock_size*search_radius)); y+=mblock_size){
+            for (unsigned int x = mblock_size*search_radius; x < (width-(mblock_size*search_radius)); x+=mblock_size){
 
-                //neighbouring 8x8 blocks indexing
+                
                 int lowest_sq_diff = 3*(OG_Y.at(y).at(x) - last_Y.at(y).at(x));
                 lowest_sq_diff = pow(lowest_sq_diff,2);
                 int v_x =0;
                 int v_y =0;
                 std::vector<int> motion_v = {0,0,0,0};
-                for(int i = -64; i<=64; i+=8){
-                    for(int j = -64; j<=64; j+=8){
+                for(int i = -(mblock_size*search_radius); i<=mblock_size*search_radius; i+=mblock_size){
+                    for(int j = -mblock_size*search_radius; j<=mblock_size*search_radius; j+=mblock_size){
                         int sq_diff =0;
 
-                        for(unsigned int k = 0; k<8; k++){
-                            for(unsigned int l = 0; l < 8; l++){
+                        for(unsigned int k = 0; k<mblock_size; k++){
+                            for(unsigned int l = 0; l < mblock_size; l++){
                                 int Y_diff = OG_Y.at(y+k).at(x+l) - last_Y.at(y+i+k).at(x+j+l);
                                 int Cb_diff = OG_Cb.at((y+k)/2).at((x+l)/2) - last_Cb.at(((y+i+k)/2)).at(((x+j+l)/2));
                                 int Cr_diff = OG_Cr.at((y+k)/2).at((x+l)/2) - last_Cr.at(((y+i+k)/2)).at(((x+j+l)/2));
@@ -435,9 +436,11 @@ int main(int argc, char** argv){
             int v_y = v.at(2);
             int v_x = v.at(3);
 
-            for(unsigned int k = 0; k<8; k++){
-                for(unsigned int l = 0; l < 8; l++){
-                    Y.at(y+k).at(x+l) = OG_Y.at(y+k).at(x+l)-last_Y.at(y+v_y+k).at(x+v_x+l);
+            for(unsigned int k = 0; k<mblock_size; k++){
+                for(unsigned int l = 0; l < mblock_size; l++){
+                    Y.at(y+k).at(x+l) = OG_Y.at(y+k).at(x+l) - last_Y.at(y+v_y+k).at(x+v_x+l);
+                    Cb.at((y+k)/2).at((x+l)/2) = OG_Cb.at((y+k)/2).at((x+l)/2) - last_Cb.at(((y+v_y+k)/2)).at(((x+v_x+l)/2));
+                    Cr.at((y+k)/2).at((x+l)/2) = OG_Cr.at((y+k)/2).at((x+l)/2) - last_Cr.at(((y+v_y+k)/2)).at(((x+v_x+l)/2));
                 }
             }
 
@@ -447,11 +450,11 @@ int main(int argc, char** argv){
 
         write_variable_bits(motion_vectors.size());
 
-        for(int i =0; i<motion_vectors.size(); i++){
-            for(int j =0; j<4; j++){
+        for(int i =0; i<motion_vectors.size(); i++)
+            for(int j =0; j<4; j++)
                 write_variable_bits(motion_vectors.at(i).at(j));
-            }
-        }
+            
+        
         
         //DCT for each plane
         auto DCT_Y = DCT(Y,height,width,0,1);     
