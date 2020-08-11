@@ -11,3 +11,4 @@ uvid/uvid_compress
 uvid/uvid_compress.o
 uvid/uvid_decompress
 uvid/.vscode/settings.json
+uvid/decode_debug_.txt

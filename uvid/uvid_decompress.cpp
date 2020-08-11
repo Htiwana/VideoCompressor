@@ -260,13 +260,26 @@ int main(int argc, char** argv){
 
         unsigned int frame_type = input_stream.read_bits(2);
 
-        //unsigned int ZigZag_Y_size = input_stream.read_u32();
+        
+        //motion vectors
+        unsigned int motion_vector_size = read_variable_bits();
+        std::vector<std::vector<int>> motion_vectors;
+        std::vector<int> motion_v;
+
+        for(int i =0; i<motion_vector_size; i++){
+            for(int j =0; j<4; j++){
+                motion_v.push_back(read_variable_bits());
+            }
+            motion_vectors.push_back(motion_v);
+            motion_v.clear();
+        }
+
+
 
         unsigned int ZigZag_Y_size = read_variable_bits();
         unsigned int ZigZag_Cb_size = read_variable_bits();
         unsigned int ZigZag_Cr_size = read_variable_bits();
-        //unsigned int ZigZag_Cb_size = input_stream.read_u32();
-        //unsigned int ZigZag_Cr_size = input_stream.read_u32();
+        
 
         auto Y = create_2d_vector<double>(height,width);
         auto Cb_scaled = create_2d_vector<double>((height+1)/2,(width+1)/2);
@@ -301,8 +314,8 @@ int main(int argc, char** argv){
         }
 
         // for(unsigned int i =1; i<ZigZag_Y.size(); i++){
-        //     if(i%64>4)
-        //         ZigZag_Y.at(i) = ZigZag_Y.at(i)+ZigZag_Y.at(i-1);
+        //     if(i%64>6)
+        //         ZigZag_Y.at(i)+=ZigZag_Y.at(i-1);
         // }
 
         for(unsigned int i =0; i<ZigZag_Cb_size; i++){
@@ -323,11 +336,24 @@ int main(int argc, char** argv){
         Cb_scaled = reverse_DCT(Cb_scaled,(height+1)/2,(width+1)/2,1,1);
         Cr_scaled = reverse_DCT(Cr_scaled,(height+1)/2,(width+1)/2,1,1);
 
-
+        auto OG_Y = Y;
         if(frame_type){//if p frame
             Y = plus(Y,last_Y);
             Cr_scaled = plus(Cr_scaled,last_Cr);
             Cb_scaled = plus(Cb_scaled,last_Cb);
+        }
+
+        for(auto v: motion_vectors){
+            int y = v.at(0);
+            int x = v.at(1);
+            int v_y = v.at(2);
+            int v_x = v.at(3);
+            
+            for(unsigned int k = 0; k<8; k++){
+                for(unsigned int l = 0; l < 8; l++){
+                    Y.at(y+k).at(x+l) = OG_Y.at(y+k).at(x+l)+last_Y.at(y+v_y+k).at(x+v_x+l);
+                }
+            }
         }
 
         for (u32 y = 0; y < height; y++)
