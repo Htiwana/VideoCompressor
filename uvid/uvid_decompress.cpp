@@ -26,98 +26,12 @@
 #include <math.h> 
 #include "input_stream.hpp"
 #include "yuv_stream.hpp"
-#include "uvg_common.hpp"
+#include "uv_common.hpp"
 
 
 InputBitStream input_stream {std::cin};
+int mblock_size = 16;
 
-std::vector<std::vector<double>> DCT_matrix  = {{ 0.3536,  0.3536,  0.3536,  0.3536,  0.3536,  0.3536,  0.3536,  0.3536}, 
-                                                { 0.4904,  0.4157,  0.2778,  0.0975, -0.0975, -0.2778, -0.4157, -0.4904}, 
-                                                { 0.4619,  0.1913, -0.1913, -0.4619, -0.4619, -0.1913,  0.1913,  0.4619}, 
-                                                { 0.4157, -0.0975, -0.4904, -0.2778,  0.2778,  0.4904,  0.0975, -0.4157},
-                                                { 0.3536, -0.3536, -0.3536,  0.3536,  0.3536, -0.3536, -0.3536,  0.3536},
-                                                { 0.2778, -0.4904,  0.0975,  0.4157, -0.4157, -0.0975,  0.4904, -0.2778},
-                                                { 0.1913, -0.4619,  0.4619, -0.1913, -0.1913,  0.4619, -0.4619,  0.1913},
-                                                { 0.0975, -0.2778,  0.4157, -0.4904,  0.4904, -0.4157,  0.2778, -0.0975}};
-
-std::vector<std::vector<double>> Y_quant  = {{ 16, 11, 10, 16, 24, 40, 51, 61}, 
-                            { 12, 12, 14, 19, 26, 58, 60, 55}, 
-                            { 14, 13, 16, 24, 40, 57, 69, 56}, 
-                            { 14, 17, 22, 29, 51, 87, 80, 62},
-                            { 18, 22, 37, 56, 68, 109, 103, 77},
-                            { 24, 35, 55, 64, 81, 104, 113, 92},
-                            { 49, 64, 78, 87, 103, 121, 120, 101},
-                            { 72, 92, 95, 98, 112, 100, 103, 99}};
-
-std::vector<std::vector<double>> C_quant  ={{17, 18, 24, 47, 99, 99, 99, 99},
-                        {18, 21, 26, 66, 99, 99, 99, 99},
-                        {24, 26, 56, 99, 99, 99, 99, 99},
-                        {47, 66, 99, 99, 99, 99, 99, 99},
-                        {99, 99, 99, 99, 99, 99, 99, 99},
-                        {99, 99, 99, 99, 99, 99, 99, 99},
-                        {99, 99, 99, 99, 99, 99, 99, 99},
-                        {99, 99, 99, 99, 99, 99, 99, 99}};
-
-//matrix multiplication from https://www.programiz.com/cpp-programming/examples/matrix-multiplication
-std::vector<std::vector<double>> multiply( std::vector<std::vector<double>> a, std::vector<std::vector<double>> b){
-
-    auto mult = create_2d_vector<double>(8,8);
-
-    for(int i = 0; i < 8; ++i)
-        for(int j = 0; j < 8; ++j)
-            for(int k = 0; k < 8; ++k)
-            {
-                mult[i][j] += a[i][k] * b[k][j];
-            }
-
-    return mult;
-}
-
-std::vector<std::vector<double>> transpose( std::vector<std::vector<double>> a){
-
-    auto transpose = create_2d_vector<double>(8,8);
-
-    for(int i = 0; i < 8; ++i)
-        for(int j = 0; j < 8; ++j) {
-            transpose[j][i] = a[i][j];
-        }
-
-    return transpose;
-}
-
-std::vector<std::vector<double>> reverse_DCT(std::vector<std::vector<double>> plane, unsigned int height, unsigned int width, int channel, double q_factor){
-    std::vector<std::vector<double>> quantizer =  ((channel==0)?Y_quant:C_quant);
-
-    auto block = create_2d_vector<double>(8,8);
-    std::vector<std::vector<double>> transformation = create_2d_vector<double>(height,width);
-
-    //read as 8x8 blocks
-    double val = 0;
-    for(unsigned int y = 0; y < height; y+=8){
-        for (unsigned int x = 0; x < width; x+=8){
-            for(unsigned int i = 0; i < 8; i++){
-                for(unsigned int j = 0; j < 8; j++){ 
-                    if(((y+i)>=height || (x+j) >=width))//only updates within image and previous pixel value gets reused outside. so takes care of padding ? 
-                        break;
-                    val = plane.at(y+i).at(x+j);   
-                    block.at(i).at(j) = val*(quantizer[i][j]*q_factor);
-                }
-            }
-            //DCT on block
-            auto DCT = multiply(transpose(DCT_matrix),block);
-            DCT = multiply(DCT,DCT_matrix);
-            for(unsigned int i = 0; i < 8; i++){
-                for(unsigned int j = 0; j < 8; j++){
-                    if((y+i)>=height || (x+j) >= width)
-                        break; 
-                    transformation.at(y+i).at(x+j) = std::round(DCT.at(i).at(j));
-                }
-            }
-        }
-    }
-
-    return transformation;
-}
 
 
 std::vector<std::vector<double>> Reverse_ZigZagBlock(std::vector<double> block_slice){
@@ -200,26 +114,6 @@ std::vector<std::vector<double>> Reverse_ZigZagOrder(std::vector<double> zig_zag
 
 }
 
-unsigned char clamp (double val){
-
-    if(val > 255){
-        return 255;
-    }else if(val < 0){
-        return 0;
-    }else{
-        return (unsigned char)(unsigned int)val;
-    }
-}
-
-std::vector<std::vector<double>> plus(std::vector<std::vector<double>> A, std::vector<std::vector<double>> B){
-    std::vector<std::vector<double>> result = create_2d_vector<double>(A.size(),A.at(0).size());
-
-    for(unsigned int i =0; i<A.size(); i++)
-        for(unsigned int j =0; j<A.at(0).size(); j++)
-            result.at(i).at(j) = A.at(i).at(j) + B.at(i).at(j);
-
-    return result;
-}
 
 int read_variable_bits(){
 
@@ -237,10 +131,7 @@ int read_variable_bits(){
 }
 
 int main(int argc, char** argv){
-
-    //Note: This program must not take any command line arguments. (Anything
-    //      it needs to know about the data must be encoded into the bitstream)
-    
+ 
     
 
     u32 height {input_stream.read_u32()};
@@ -260,21 +151,20 @@ int main(int argc, char** argv){
 
         unsigned int frame_type = input_stream.read_bits(2);
 
-        
-        //motion vectors
-        unsigned int motion_vector_size = read_variable_bits();
         std::vector<std::vector<int>> motion_vectors;
         std::vector<int> motion_v;
-
-        for(int i =0; i<motion_vector_size; i++){
-            for(int j =0; j<4; j++){
-                motion_v.push_back(read_variable_bits());
+        //motion vectors
+        if(frame_type){
+            unsigned int motion_vector_size = read_variable_bits();
+            
+            for(int i =0; i<motion_vector_size; i++){
+                for(int j =0; j<4; j++){
+                    motion_v.push_back(read_variable_bits());
+                }
+                motion_vectors.push_back(motion_v);
+                motion_v.clear();
             }
-            motion_vectors.push_back(motion_v);
-            motion_v.clear();
         }
-
-
 
         unsigned int ZigZag_Y_size = read_variable_bits();
         unsigned int ZigZag_Cb_size = read_variable_bits();
@@ -339,25 +229,28 @@ int main(int argc, char** argv){
         auto OG_Y = Y;
         auto OG_Cb = Cb_scaled;
         auto OG_Cr = Cr_scaled;
+
+
         if(frame_type){//if p frame
+
             Y = plus(Y,last_Y);
             Cr_scaled = plus(Cr_scaled,last_Cr);
             Cb_scaled = plus(Cb_scaled,last_Cb);
-        }
 
-        int mblock_size = 16;
-        
-        for(auto v: motion_vectors){
-            int y = v.at(0);
-            int x = v.at(1);
-            int v_y = v.at(2);
-            int v_x = v.at(3);
-            
-            for(unsigned int k = 0; k<mblock_size; k++){
-                for(unsigned int l = 0; l < mblock_size; l++){
-                    Y.at(y+k).at(x+l) = OG_Y.at(y+k).at(x+l) + last_Y.at(y+v_y+k).at(x+v_x+l);
-                    Cb_scaled.at((y+k)/2).at((x+l)/2) = OG_Cb.at((y+k)/2).at((x+l)/2) + last_Cb.at(((y+v_y+k)/2)).at(((x+v_x+l)/2));
-                    Cr_scaled.at((y+k)/2).at((x+l)/2) = OG_Cr.at((y+k)/2).at((x+l)/2) + last_Cr.at(((y+v_y+k)/2)).at(((x+v_x+l)/2));
+
+
+            for(auto v: motion_vectors){
+                int y = v.at(0);
+                int x = v.at(1);
+                int v_y = v.at(2);
+                int v_x = v.at(3);
+                
+                for(unsigned int k = 0; k<mblock_size; k++){
+                    for(unsigned int l = 0; l < mblock_size; l++){
+                        Y.at(y+k).at(x+l) = OG_Y.at(y+k).at(x+l) + last_Y.at(y+v_y+k).at(x+v_x+l);
+                        Cb_scaled.at((y+k)/2).at((x+l)/2) = OG_Cb.at((y+k)/2).at((x+l)/2) + last_Cb.at(((y+v_y+k)/2)).at(((x+v_x+l)/2));
+                        Cr_scaled.at((y+k)/2).at((x+l)/2) = OG_Cr.at((y+k)/2).at((x+l)/2) + last_Cr.at(((y+v_y+k)/2)).at(((x+v_x+l)/2));
+                    }
                 }
             }
         }

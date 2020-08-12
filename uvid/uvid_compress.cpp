@@ -26,39 +26,21 @@
 #include "output_stream.hpp"
 #include "yuv_stream.hpp"
 #include "bitmap_image.hpp"
-#include "uvg_common.hpp"
+#include "uv_common.hpp"
 #include <cmath>
 
 
 OutputBitStream output_stream {std::cout};
+const unsigned int mblock_size = 16;
+const unsigned int search_radius =4;
 
-//https://www.mathworks.com/help/images/ref/dctmtx.html
-std::vector<std::vector<double>> DCT_matrix  = {{ 0.3536,  0.3536,  0.3536,  0.3536,  0.3536,  0.3536,  0.3536,  0.3536}, 
-                                                { 0.4904,  0.4157,  0.2778,  0.0975, -0.0975, -0.2778, -0.4157, -0.4904}, 
-                                                { 0.4619,  0.1913, -0.1913, -0.4619, -0.4619, -0.1913,  0.1913,  0.4619}, 
-                                                { 0.4157, -0.0975, -0.4904, -0.2778,  0.2778,  0.4904,  0.0975, -0.4157},
-                                                { 0.3536, -0.3536, -0.3536,  0.3536,  0.3536, -0.3536, -0.3536,  0.3536},
-                                                { 0.2778, -0.4904,  0.0975,  0.4157, -0.4157, -0.0975,  0.4904, -0.2778},
-                                                { 0.1913, -0.4619,  0.4619, -0.1913, -0.1913,  0.4619, -0.4619,  0.1913},
-                                                { 0.0975, -0.2778,  0.4157, -0.4904,  0.4904, -0.4157,  0.2778, -0.0975}};
+std::vector<std::vector<double>> last_Y;
+std::vector<std::vector<double>> last_Cb;
+std::vector<std::vector<double>> last_Cr;
 
-std::vector<std::vector<double>> Y_quant  = {{ 16, 11, 10, 16, 24, 40, 51, 61}, 
-                            { 12, 12, 14, 19, 26, 58, 60, 55}, 
-                            { 14, 13, 16, 24, 40, 57, 69, 56}, 
-                            { 14, 17, 22, 29, 51, 87, 80, 62},
-                            { 18, 22, 37, 56, 68, 109, 103, 77},
-                            { 24, 35, 55, 64, 81, 104, 113, 92},
-                            { 49, 64, 78, 87, 103, 121, 120, 101},
-                            { 72, 92, 95, 98, 112, 100, 103, 99}};
-
-std::vector<std::vector<double>> C_quant  ={{17, 18, 24, 47, 99, 99, 99, 99},
-                        {18, 21, 26, 66, 99, 99, 99, 99},
-                        {24, 26, 56, 99, 99, 99, 99, 99},
-                        {47, 66, 99, 99, 99, 99, 99, 99},
-                        {99, 99, 99, 99, 99, 99, 99, 99},
-                        {99, 99, 99, 99, 99, 99, 99, 99},
-                        {99, 99, 99, 99, 99, 99, 99, 99},
-                        {99, 99, 99, 99, 99, 99, 99, 99}};
+std::vector<std::vector<double>> OG_Y;
+std::vector<std::vector<double>> OG_Cb;
+std::vector<std::vector<double>> OG_Cr;
 
 
 
@@ -136,125 +118,7 @@ std::vector<double> ZigZagOrder(std::vector<std::vector<double>> plane, unsigned
 }
 
 
-//matrix multiplication from https://www.programiz.com/cpp-programming/examples/matrix-multiplication
-std::vector<std::vector<double>> multiply( std::vector<std::vector<double>> a, std::vector<std::vector<double>> b){
 
-    auto mult = create_2d_vector<double>(8,8);
-
-    for(int i = 0; i < 8; ++i)
-        for(int j = 0; j < 8; ++j)
-            for(int k = 0; k < 8; ++k)
-            {
-                mult[i][j] += a[i][k] * b[k][j];
-            }
-
-    return mult;
-}
-
-std::vector<std::vector<double>> transpose( std::vector<std::vector<double>> a){
-
-    auto transpose = create_2d_vector<double>(8,8);
-
-    for(int i = 0; i < 8; ++i)
-        for(int j = 0; j < 8; ++j) {
-            transpose[j][i] = a[i][j];
-        }
-
-    return transpose;
-}
-
-
-//reads plane in 8x8 blocks,  performs DCT on each blocks and puts quantized values in transformation
-std::vector<std::vector<double>> DCT(std::vector<std::vector<double>> plane, unsigned int height, unsigned int width, int channel, double q_factor){
-    std::vector<std::vector<double>> quantizer =  ((channel==0)?Y_quant:C_quant);
-
-    auto block = create_2d_vector<double>(8,8);
-    std::vector<std::vector<double>> transformation = create_2d_vector<double>(height,width);
-
-    //read as 8x8 blocks
-    double val = 0;
-    for(unsigned int y = 0; y < height; y+=8){
-        for (unsigned int x = 0; x < width; x+=8){
-            for(unsigned int i = 0; i < 8; i++){
-                for(unsigned int j = 0; j < 8; j++){ 
-                    if(!((y+i)>=height || (x+j) >=width))//only updates within image and previous pixel value gets reused outside. so takes care of padding ? 
-                        val = plane.at(y+i).at(x+j);   
-                    block.at(i).at(j) = val;
-                }
-            }
-            //DCT on block
-            auto DCT = multiply(DCT_matrix,block);
-            DCT = multiply(DCT,transpose(DCT_matrix));
-            for(unsigned int i = 0; i < 8; i++){
-                for(unsigned int j = 0; j < 8; j++){
-                    if((y+i)>=height || (x+j) >= width)
-                        break; 
-                    transformation.at(y+i).at(x+j) = std::round(DCT.at(i).at(j)/(quantizer[i][j]*q_factor));
-                }
-            }
-        }
-    }
-
-    return transformation;
-}
-
-std::vector<std::vector<double>> reverse_DCT(std::vector<std::vector<double>> plane, unsigned int height, unsigned int width, int channel, double q_factor){
-    std::vector<std::vector<double>> quantizer =  ((channel==0)?Y_quant:C_quant);
-
-    auto block = create_2d_vector<double>(8,8);
-    std::vector<std::vector<double>> transformation = create_2d_vector<double>(height,width);
-
-    //read as 8x8 blocks
-    double val = 0;
-    for(unsigned int y = 0; y < height; y+=8){
-        for (unsigned int x = 0; x < width; x+=8){
-            for(unsigned int i = 0; i < 8; i++){
-                for(unsigned int j = 0; j < 8; j++){ 
-                    if(((y+i)>=height || (x+j) >=width))//only updates within image and previous pixel value gets reused outside. so takes care of padding ? 
-                        break;
-                    val = plane.at(y+i).at(x+j);   
-                    block.at(i).at(j) = val*(quantizer[i][j]*q_factor);
-                }
-            }
-            //DCT on block
-            auto DCT = multiply(transpose(DCT_matrix),block);
-            DCT = multiply(DCT,DCT_matrix);
-            for(unsigned int i = 0; i < 8; i++){
-                for(unsigned int j = 0; j < 8; j++){
-                    if((y+i)>=height || (x+j) >= width)
-                        break; 
-                    transformation.at(y+i).at(x+j) = std::round(DCT.at(i).at(j));
-                }
-            }
-        }
-    }
-
-    return transformation;
-}
-
-std::vector<std::vector<double>> minus(std::vector<std::vector<double>> A, std::vector<std::vector<double>> B){
-    std::vector<std::vector<double>> result = create_2d_vector<double>(A.size(),A.at(0).size());
-
-    assert(A.size()==B.size());
-    for(unsigned int i =0; i<A.size(); i++)
-        for(unsigned int j =0; j<A.at(0).size(); j++)
-            result.at(i).at(j) = A.at(i).at(j) - B.at(i).at(j);
-
-    return result;
-}
-
-
-
-
-std::vector<std::vector<double>> plus(std::vector<std::vector<double>> A, std::vector<std::vector<double>> B){
-    std::vector<std::vector<double>> result = create_2d_vector<double>(A.size(),A.at(0).size());
-
-    for(unsigned int i =0; i<A.size(); i++)
-        for(unsigned int j =0; j<A.at(0).size(); j++)
-            result.at(i).at(j) = A.at(i).at(j) + B.at(i).at(j);
-
-    return result;
-}
 
 
 int write_variable_bits(int val){
@@ -293,10 +157,92 @@ int rle(int index, std::vector<double> vec){
     return run_length;
 }
 
+double mean_square_diff(int y,int x,int p_y, int p_x){
+    double msd=0;
 
-std::vector<int> find_motion_vectors(){
+    for(unsigned int k = 0; k<mblock_size; k++){
+        for(unsigned int l = 0; l < mblock_size; l++){
+
+            int Y_diff = OG_Y.at(y+k).at(x+l) - last_Y.at(p_y+k).at(p_x+l);
+            int Cb_diff = OG_Cb.at((y+k)/2).at((x+l)/2) - last_Cb.at(((p_y+k)/2)).at(((p_x+l)/2));
+            int Cr_diff = OG_Cr.at((y+k)/2).at((x+l)/2) - last_Cr.at(((p_y+k)/2)).at(((p_x+l)/2));
+            msd+= pow(Y_diff,2);
+            msd+= pow(Cb_diff,2);
+            msd+= pow(Cr_diff,2);
+        }
+    }
+
+    return msd;
 
 }
+
+std::vector<std::vector<int>> find_motion_vectors(int height, int width){
+
+    std::vector<std::vector<int>> motion_vectors;
+
+        //iterate over blocks within a sub area of the frame
+        for(unsigned int y = mblock_size*search_radius; y < (height-(mblock_size*search_radius)); y+=mblock_size){
+            for (unsigned int x = mblock_size*search_radius; x < (width-(mblock_size*search_radius)); x+=mblock_size){
+
+                
+                double lowest_sq_diff = mean_square_diff(y,x,y,x);
+                std::vector<int> motion_v = {0,0,0,0};
+
+                for(int i = -(mblock_size*search_radius); i<=mblock_size*search_radius; i+=mblock_size){
+                    for(int j = -mblock_size*search_radius; j<=mblock_size*search_radius; j+=mblock_size){
+
+                        double sq_diff = mean_square_diff(y,x,y+i,x+j);
+
+                        if(sq_diff < lowest_sq_diff){
+                            lowest_sq_diff = sq_diff;
+                            motion_v = { (int)y, (int)x, i,j};  
+                        }
+                    }
+                }
+                if(motion_v.at(0)!=0){
+                    motion_vectors.push_back(motion_v);
+                    //debugfile << "(" << motion_v.at(2) << "," << motion_v.at(4) << ")" ;
+                }
+                    
+            }
+        }
+    
+    return motion_vectors;
+}
+
+std::vector<std::vector<double>> motion_vector_deltas(std::vector<std::vector<int>> motion_vectors, std::vector<std::vector<double>> channel_values, int channel){
+
+    int scale_factor =1;
+    auto last_frame = last_Y;
+    auto OG = OG_Y;
+
+    if( channel ==1){
+        auto last_frame = last_Cb;
+        auto OG = OG_Cb;
+        scale_factor = 2;
+    }else{
+        auto last_frame = last_Cr;
+        auto OG = OG_Cr;
+        scale_factor =2;
+    }
+    
+
+
+    for(auto v: motion_vectors){
+        int y = v.at(0);
+        int x = v.at(1);
+        int v_y = v.at(2);
+        int v_x = v.at(3);
+
+        for(unsigned int k = 0; k<mblock_size; k++)
+            for(unsigned int l = 0; l < mblock_size; l++)
+                channel_values.at((y+k)/scale_factor).at((x+l)/scale_factor) = OG.at((y+k)/scale_factor).at((x+l)/scale_factor) - last_frame.at(((y+v_y+k)/scale_factor)).at(((x+v_x+l)/scale_factor));
+    }
+
+    return channel_values;
+}
+
+
 
 int main(int argc, char** argv){
 
@@ -320,9 +266,9 @@ int main(int argc, char** argv){
     unsigned int frame_type =0;
     unsigned int frame_num =0;
 
-    auto last_Y = create_2d_vector<double>(height,width);
-    auto last_Cb = create_2d_vector<double>(height/2,width/2);
-    auto last_Cr = create_2d_vector<double>(height/2,width/2);
+    last_Y = create_2d_vector<double>(height,width);
+    last_Cb = create_2d_vector<double>(height/2,width/2);
+    last_Cr = create_2d_vector<double>(height/2,width/2);
 
     while (reader.read_next_frame()){
 
@@ -334,125 +280,58 @@ int main(int argc, char** argv){
         
         YUVFrame420& frame = reader.frame();
         output_stream.push_bits(frame_type,2);
-
-        //output_stream.push_byte(0);
-
         
         auto Y = create_2d_vector<double>(height,width);
         auto Cb = create_2d_vector<double>(height/2,width/2);
         auto Cr = create_2d_vector<double>(height/2,width/2);
 
         //Extract the Y plane into its own array 
-        auto OG_Y = create_2d_vector<double>(height,width);
+        OG_Y = create_2d_vector<double>(height,width);
         for(unsigned int y = 0; y < height; y++)
             for (unsigned int x = 0; x < width; x++)
                 OG_Y.at(y).at(x) = frame.Y(x,y);
         
         //Extract the Cb plane into its own array 
-        auto OG_Cb = create_2d_vector<double>(height/2,width/2);
+        OG_Cb = create_2d_vector<double>(height/2,width/2);
         for(unsigned int y = 0; y < height/2; y++)
             for (unsigned int x = 0; x < width/2; x++)
                 OG_Cb.at(y).at(x) = frame.Cb(x,y);
 
         //Extract the Cr plane into its own array
-        auto OG_Cr = create_2d_vector<double>(height/2,width/2);
+        OG_Cr = create_2d_vector<double>(height/2,width/2);
         for(unsigned int y = 0; y < height/2; y++)
             for (unsigned int x = 0; x < width/2; x++)
                 OG_Cr.at(y).at(x) = frame.Cr(x,y);
 
 
-        //find motion vectors
-        //take last frame take current frame
-        //for each block go 
 
-        debugfile << "FRAME"<< std::endl;        
-        int mblock_size = 16;
-        int search_radius =4;
-        std::vector<std::vector<int>> motion_vectors;
-        for(unsigned int y = mblock_size*search_radius; y < (height-(mblock_size*search_radius)); y+=mblock_size){
-            for (unsigned int x = mblock_size*search_radius; x < (width-(mblock_size*search_radius)); x+=mblock_size){
+        //debugfile << "FRAME"<< std::endl;
 
-                
-                int lowest_sq_diff = 3*(OG_Y.at(y).at(x) - last_Y.at(y).at(x));
-                lowest_sq_diff = pow(lowest_sq_diff,2);
-                int v_x =0;
-                int v_y =0;
-                std::vector<int> motion_v = {0,0,0,0};
-                for(int i = -(mblock_size*search_radius); i<=mblock_size*search_radius; i+=mblock_size){
-                    for(int j = -mblock_size*search_radius; j<=mblock_size*search_radius; j+=mblock_size){
-                        int sq_diff =0;
+        auto motion_vectors = find_motion_vectors(height,width);
 
-                        for(unsigned int k = 0; k<mblock_size; k++){
-                            for(unsigned int l = 0; l < mblock_size; l++){
-                                int Y_diff = OG_Y.at(y+k).at(x+l) - last_Y.at(y+i+k).at(x+j+l);
-                                int Cb_diff = OG_Cb.at((y+k)/2).at((x+l)/2) - last_Cb.at(((y+i+k)/2)).at(((x+j+l)/2));
-                                int Cr_diff = OG_Cr.at((y+k)/2).at((x+l)/2) - last_Cr.at(((y+i+k)/2)).at(((x+j+l)/2));
-                                sq_diff+= pow(Y_diff,2);
-                                sq_diff+= pow(Cb_diff,2);
-                                sq_diff+= pow(Cr_diff,2);
-                            }
-                        }
-                        if(sq_diff < lowest_sq_diff){
-                            lowest_sq_diff = sq_diff;
-                            v_y = i;
-                            v_x = j;
-                            motion_v.at(0) = y;
-                            motion_v.at(1) = x;
-                            motion_v.at(2) = v_y;
-                            motion_v.at(3) = v_x;
-                            
-                        }
-
-                        
-                    }
-                }
-                if(motion_v.at(0)!=0){
-                    motion_vectors.push_back(motion_v);
-                    debugfile << "(" << v_y << "," << v_x << ")" ;
-                }
-                    
-            }
-            //debugfile << std::endl;
-        }
-
-        
-        //calculate diff based on motion vec
-        // store motion vectors as 8 bits before each block
-
-        
         if(frame_type){//if p frame        
             Y = minus(OG_Y,last_Y);
             Cb = minus(OG_Cb,last_Cb);
             Cr = minus(OG_Cr,last_Cr);
+
+            auto motion_vectors = find_motion_vectors(height,width);
+
+            Y = motion_vector_deltas(motion_vectors,Y,0);
+            Cb = motion_vector_deltas(motion_vectors,Cb,1);
+            Cr = motion_vector_deltas(motion_vectors,Cr,2);
+
+            write_variable_bits(motion_vectors.size());
+            for(unsigned int i =0; i<motion_vectors.size(); i++)
+                for(unsigned int j =0; j<4; j++)
+                    write_variable_bits(motion_vectors.at(i).at(j));
+
         }else{
             Y = OG_Y;
             Cb = OG_Cb;
             Cr = OG_Cr;
         }
 
-        for(auto v: motion_vectors){
-            int y = v.at(0);
-            int x = v.at(1);
-            int v_y = v.at(2);
-            int v_x = v.at(3);
 
-            for(unsigned int k = 0; k<mblock_size; k++){
-                for(unsigned int l = 0; l < mblock_size; l++){
-                    Y.at(y+k).at(x+l) = OG_Y.at(y+k).at(x+l) - last_Y.at(y+v_y+k).at(x+v_x+l);
-                    Cb.at((y+k)/2).at((x+l)/2) = OG_Cb.at((y+k)/2).at((x+l)/2) - last_Cb.at(((y+v_y+k)/2)).at(((x+v_x+l)/2));
-                    Cr.at((y+k)/2).at((x+l)/2) = OG_Cr.at((y+k)/2).at((x+l)/2) - last_Cr.at(((y+v_y+k)/2)).at(((x+v_x+l)/2));
-                }
-            }
-
-
-            
-        }
-
-        write_variable_bits(motion_vectors.size());
-
-        for(int i =0; i<motion_vectors.size(); i++)
-            for(int j =0; j<4; j++)
-                write_variable_bits(motion_vectors.at(i).at(j));
             
         
         
@@ -471,8 +350,8 @@ int main(int argc, char** argv){
         write_variable_bits(ZigZag_Cr.size());
 
 
-        
-        int prev = ZigZag_Y.at(0);
+        //delta comp
+        //int prev = ZigZag_Y.at(0);
         // for(unsigned int i =1; i<ZigZag_Y.size(); i++){
         //     if(i%64>6){
         //         ZigZag_Y.at(i)-=prev;
