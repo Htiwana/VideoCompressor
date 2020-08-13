@@ -136,7 +136,7 @@ int write_variable_bits(int val){
     output_stream.push_bit(0);
     output_stream.push_bits((unsigned int)val,bits);
 
-    return bits;
+    return (bits*2)+2;
 }
 
 
@@ -192,6 +192,7 @@ std::vector<std::vector<int>> find_motion_vectors(int height, int width){
                     for(int j = -mblock_size*search_radius; j<=mblock_size*search_radius; j+=mblock_size){
 
                         double sq_diff = mean_square_diff(y,x,y+i,x+j);
+
 
                         if(sq_diff < lowest_sq_diff){
                             lowest_sq_diff = sq_diff;
@@ -253,6 +254,7 @@ int main(int argc, char** argv){
         std::cerr << "Usage: " << argv[0] << " <width> <height> <low/medium/high>" << std::endl;
         return 1;
     }
+
     u32 width = std::stoi(argv[1]);
     u32 height = std::stoi(argv[2]);
     std::string quality{argv[3]};
@@ -262,6 +264,31 @@ int main(int argc, char** argv){
 
     output_stream.push_u32(height);
     output_stream.push_u32(width);
+
+
+    unsigned int quantization_factor = 0;
+    if(quality =="low"){
+        quantization_factor =1;
+    }else if(quality == "medium"){
+        quantization_factor =2;
+    }else{
+        quantization_factor =3;
+    }
+    
+    output_stream.push_bits(quantization_factor,2);
+    
+    double q_factor = 0;
+    switch(quantization_factor){
+        case 1:
+            q_factor = 2;
+            break;
+        case 2:
+            q_factor = 1;
+            break;
+        case 3:
+            q_factor = 0.5;
+            break;
+    }
 
     unsigned int frame_type =0;
     unsigned int frame_num =0;
@@ -285,31 +312,29 @@ int main(int argc, char** argv){
         auto Cb = create_2d_vector<double>(height/2,width/2);
         auto Cr = create_2d_vector<double>(height/2,width/2);
 
-        //Extract the Y plane into its own array 
+        //Extract the planes into different arrays 
         OG_Y = create_2d_vector<double>(height,width);
+        OG_Cb = create_2d_vector<double>(height/2,width/2);
+        OG_Cr = create_2d_vector<double>(height/2,width/2);
         for(unsigned int y = 0; y < height; y++)
             for (unsigned int x = 0; x < width; x++)
                 OG_Y.at(y).at(x) = frame.Y(x,y);
-        
-        //Extract the Cb plane into its own array 
-        OG_Cb = create_2d_vector<double>(height/2,width/2);
         for(unsigned int y = 0; y < height/2; y++)
             for (unsigned int x = 0; x < width/2; x++)
                 OG_Cb.at(y).at(x) = frame.Cb(x,y);
-
-        //Extract the Cr plane into its own array
-        OG_Cr = create_2d_vector<double>(height/2,width/2);
         for(unsigned int y = 0; y < height/2; y++)
             for (unsigned int x = 0; x < width/2; x++)
                 OG_Cr.at(y).at(x) = frame.Cr(x,y);
 
 
-
-        //debugfile << "FRAME"<< std::endl;
+        
 
         auto motion_vectors = find_motion_vectors(height,width);
 
-        if(frame_type){//if p frame        
+        if(frame_type){//if p frame
+            OG_Y = reverse_DCT(DCT(OG_Y,height,width,0,q_factor),height,width,0,q_factor);
+            OG_Cb = reverse_DCT(DCT(OG_Cb,height/2,width/2,0,q_factor),height/2,width/2,0,q_factor);
+            OG_Cr = reverse_DCT(DCT(OG_Cr,height/2,width/2,0,q_factor),height/2,width/2,0,q_factor);     
             Y = minus(OG_Y,last_Y);
             Cb = minus(OG_Cb,last_Cb);
             Cr = minus(OG_Cr,last_Cr);
@@ -336,9 +361,9 @@ int main(int argc, char** argv){
         
         
         //DCT for each plane
-        auto DCT_Y = DCT(Y,height,width,0,1);     
-        auto DCT_Cb = DCT(Cb,(height+1)/2,(width+1)/2,1,1);
-        auto DCT_Cr = DCT(Cr,(height+1)/2,(width+1)/2,1,1);
+        auto DCT_Y = DCT(Y,height,width,0, q_factor);     
+        auto DCT_Cb = DCT(Cb,(height+1)/2,(width+1)/2,1,q_factor);
+        auto DCT_Cr = DCT(Cr,(height+1)/2,(width+1)/2,1,q_factor);
 
 
         auto ZigZag_Y = ZigZagOrder(DCT_Y,height,width);        
@@ -351,7 +376,7 @@ int main(int argc, char** argv){
 
 
         //delta comp
-        //int prev = ZigZag_Y.at(0);
+        // int prev = ZigZag_Y.at(0);
         // for(unsigned int i =1; i<ZigZag_Y.size(); i++){
         //     if(i%64>6){
         //         ZigZag_Y.at(i)-=prev;
@@ -360,36 +385,76 @@ int main(int argc, char** argv){
         //         prev = ZigZag_Y.at(i);
         // }
 
-        //Write ZigZag values in variable bit format
-        for(unsigned int i =0; i<ZigZag_Y.size(); i++){
-            int val = std::round(ZigZag_Y.at(i));
-            write_variable_bits(val);
-
-            //rle
-            // if(val==0){
-            //     int rl = rle(i,ZigZag_Y);
-            //     if(frame_num==2)
-            //         debugfile2 << "run: " << rl << std::endl;
-            //     write_variable_bits(rl);
-            //     i+= rl;
-            // }
+        if(frame_num==2){
+            for(int j = 1; j < 50; j++){
+                for(int i =64*j; i<64*(j+1); i++){
+                    debugfile << ZigZag_Y.at(i)+0.0 << " ";
+                }
+                debugfile << std::endl;
+            }
+                
+                    
         }
+            
 
-        for(unsigned int i =0; i<ZigZag_Cb.size(); i++)
-            write_variable_bits(std::round(ZigZag_Cb.at(i)));
-        for(unsigned int i =0; i<ZigZag_Cr.size(); i++)
-            write_variable_bits(std::round(ZigZag_Cr.at(i)));
+        //Write ZigZag values in variable bit format with rle
+        int rl =0;
+        int total_y = 0;
+        total_y+=write_variable_bits(ZigZag_Y.at(0));
+        debugfile << "bits used for 1st element" << total_y;
+        for(unsigned int i =1; i<ZigZag_Y.size(); i++){
 
-        //compute last frame vlaues that decompressor will see by doing and undoing DCT
-        OG_Y = DCT(OG_Y,height,width,0,1);
-        last_Y = reverse_DCT(OG_Y,height,width,0,1);
 
-        OG_Cb = DCT(OG_Cb,(height+1)/2,(width+1)/2,1,1);
-        last_Cb = reverse_DCT(OG_Cb,(height+1)/2,(width+1)/2,1,1);
+            if(ZigZag_Y.at(i) == ZigZag_Y.at(i-1)){
+                rl++;
+            }else{
+                debugfile << "run" << rl;
+                total_y += write_variable_bits(rl);
+                write_variable_bits(ZigZag_Y.at(i));
+                rl=0;
+            }
+            if(i==64 && frame_num==2)
+                debugfile << "bits used for 1 block: " << total_y;
+        }
+        write_variable_bits(rl);
+        rl =0;
 
-        OG_Cr = DCT(OG_Cr,(height+1)/2,(width+1)/2,1,1);
-        last_Cr = reverse_DCT(OG_Cr,(height+1)/2,(width+1)/2,1,1);
+        write_variable_bits(ZigZag_Cb.at(0));
+        for(unsigned int i =1; i<ZigZag_Cb.size(); i++){
 
+            if(ZigZag_Cb.at(i) == ZigZag_Cb.at(i-1)){
+                rl++;
+            }else{
+                write_variable_bits(rl);
+                write_variable_bits(ZigZag_Cb.at(i));
+                rl=0;
+            }
+        }
+        write_variable_bits(rl);
+        rl=0;
+
+        write_variable_bits(ZigZag_Cr.at(0));
+        for(unsigned int i =1; i<ZigZag_Cr.size(); i++){
+
+            if(ZigZag_Cr.at(i) == ZigZag_Cr.at(i-1)){
+                rl++;
+            }else{
+                write_variable_bits(rl);
+                write_variable_bits(ZigZag_Cr.at(i));
+                rl=0;
+            }
+        }
+        write_variable_bits(rl);
+
+        //compute last frame vlaues that decompressor will obtain by doing and undoing DCT on orginal values
+        OG_Y = DCT(OG_Y,height,width,0,q_factor);
+        last_Y = reverse_DCT(OG_Y,height,width,0,q_factor);
+
+        OG_Cb = DCT(OG_Cb,(height+1)/2,(width+1)/2,1,q_factor);
+        last_Cb = reverse_DCT(OG_Cb,(height+1)/2,(width+1)/2,1,q_factor);
+
+        OG_Cr = DCT(OG_Cr,(height+1)/2,(width+1)/2,1,q_factor);
+        last_Cr = reverse_DCT(OG_Cr,(height+1)/2,(width+1)/2,1,q_factor);
     }
 
     output_stream.push_byte(0); //Flag to indicate end of data

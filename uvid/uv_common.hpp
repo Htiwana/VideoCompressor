@@ -138,7 +138,7 @@ std::vector<std::vector<double>> reverse_DCT(std::vector<std::vector<double>> pl
                 for(unsigned int j = 0; j < 8; j++){
                     if((y+i)>=height || (x+j) >= width)
                         break; 
-                    transformation.at(y+i).at(x+j) = std::round(DCT.at(i).at(j));
+                    transformation.at(y+i).at(x+j) = DCT.at(i).at(j);
                 }
             }
         }

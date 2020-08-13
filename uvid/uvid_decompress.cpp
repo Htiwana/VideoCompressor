@@ -137,6 +137,21 @@ int main(int argc, char** argv){
     u32 height {input_stream.read_u32()};
     u32 width {input_stream.read_u32()};
 
+    unsigned int quantization_factor = input_stream.read_bits(2);
+
+    double q_factor = 0;
+    switch(quantization_factor){
+        case 1:
+            q_factor = 2;
+            break;
+        case 2:
+            q_factor = 1;
+            break;
+        case 3:
+            q_factor = 0.5;
+            break;
+    }
+
     YUVStreamWriter writer {std::cout, width, height};
 
     auto last_Y = create_2d_vector<double>(height,width);
@@ -187,34 +202,40 @@ int main(int argc, char** argv){
         for(unsigned int i =0; i<ZigZag_Y_size; i++){
             int val = read_variable_bits();
             ZigZag_Y.push_back(val);
+            int rl = read_variable_bits();
 
-            //rle
-            // if(val==0){
-            //     int rl = read_variable_bits();
-            //     if(frame_num==2)
-            //         debugfile << "run: " << rl << std::endl;
-            //     for(int j =0; j<rl; j++){
-            //         ZigZag_Y.push_back(val);
-            //         i++;
-            //     }
-                
-            // }
-
+            for(int j=0; j<rl; j++){
+                ZigZag_Y.push_back(val);
+                i++;
+            }
             
         }
 
-        // for(unsigned int i =1; i<ZigZag_Y.size(); i++){
-        //     if(i%64>6)
-        //         ZigZag_Y.at(i)+=ZigZag_Y.at(i-1);
-        // }
+
 
         for(unsigned int i =0; i<ZigZag_Cb_size; i++){
             int val = read_variable_bits();
             ZigZag_Cb.push_back(val);
+
+            int rl = read_variable_bits();
+
+            for(int j=0; j<rl; j++){
+                ZigZag_Cb.push_back(val);
+                i++;
+            }
+
         }
         for(unsigned int i =0; i<ZigZag_Cr_size; i++){
             int val = read_variable_bits();
             ZigZag_Cr.push_back(val);
+
+            int rl = read_variable_bits();
+
+            for(int j=0; j<rl; j++){
+                ZigZag_Cr.push_back(val);
+                i++;
+            }
+
         }
     
         Y = Reverse_ZigZagOrder(ZigZag_Y,height,width);
@@ -222,9 +243,9 @@ int main(int argc, char** argv){
         Cr_scaled = Reverse_ZigZagOrder(ZigZag_Cr,(height+1)/2,(width+1)/2);
 
 
-        Y = reverse_DCT(Y,height,width,0,1);
-        Cb_scaled = reverse_DCT(Cb_scaled,(height+1)/2,(width+1)/2,1,1);
-        Cr_scaled = reverse_DCT(Cr_scaled,(height+1)/2,(width+1)/2,1,1);
+        Y = reverse_DCT(Y,height,width,0,q_factor);
+        Cb_scaled = reverse_DCT(Cb_scaled,(height+1)/2,(width+1)/2,1,q_factor);
+        Cr_scaled = reverse_DCT(Cr_scaled,(height+1)/2,(width+1)/2,1,q_factor);
 
         auto OG_Y = Y;
         auto OG_Cb = Cb_scaled;
