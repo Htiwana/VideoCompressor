@@ -31,8 +31,8 @@
 
 
 OutputBitStream output_stream {std::cout};
-const unsigned int mblock_size = 16;
-const unsigned int search_radius =4;
+const int mblock_size = 16;
+const int search_radius =4;
 
 std::vector<std::vector<double>> last_Y;
 std::vector<std::vector<double>> last_Cb;
@@ -176,7 +176,7 @@ double mean_square_diff(int y,int x,int p_y, int p_x){
 
 }
 
-std::vector<std::vector<int>> find_motion_vectors(int height, int width){
+std::vector<std::vector<int>> find_motion_vectors(u32 height, u32 width){
 
     std::vector<std::vector<int>> motion_vectors;
 
@@ -211,22 +211,11 @@ std::vector<std::vector<int>> find_motion_vectors(int height, int width){
     return motion_vectors;
 }
 
-std::vector<std::vector<double>> motion_vector_deltas(std::vector<std::vector<int>> motion_vectors, std::vector<std::vector<double>> channel_values, int channel){
+std::tuple<std::vector<std::vector<double>>, std::vector<std::vector<double>>, std::vector<std::vector<double>>> 
+motion_vector_deltas(std::vector<std::vector<int>> motion_vectors, std::vector<std::vector<double>> Y,std::vector<std::vector<double>> Cb,std::vector<std::vector<double>> Cr){
 
-    int scale_factor =1;
-    auto last_frame = last_Y;
-    auto OG = OG_Y;
 
-    if( channel ==1){
-        auto last_frame = last_Cb;
-        auto OG = OG_Cb;
-        scale_factor = 2;
-    }else{
-        auto last_frame = last_Cr;
-        auto OG = OG_Cr;
-        scale_factor =2;
-    }
-    
+
 
 
     for(auto v: motion_vectors){
@@ -236,11 +225,17 @@ std::vector<std::vector<double>> motion_vector_deltas(std::vector<std::vector<in
         int v_x = v.at(3);
 
         for(unsigned int k = 0; k<mblock_size; k++)
-            for(unsigned int l = 0; l < mblock_size; l++)
-                channel_values.at((y+k)/scale_factor).at((x+l)/scale_factor) = OG.at((y+k)/scale_factor).at((x+l)/scale_factor) - last_frame.at(((y+v_y+k)/scale_factor)).at(((x+v_x+l)/scale_factor));
+            for(unsigned int l = 0; l < mblock_size; l++){
+                Y.at(y+k).at(x+l) = OG_Y.at(y+k).at(x+l) - last_Y.at(y+v_y+k).at(x+v_x+l);
+                Cb.at((y+k)/2).at((x+l)/2) = OG_Cb.at((y+k)/2).at((x+l)/2) - last_Cb.at(((y+v_y+k)/2)).at(((x+v_x+l)/2));
+                Cr.at((y+k)/2).at((x+l)/2) = OG_Cr.at((y+k)/2).at((x+l)/2) - last_Cr.at(((y+v_y+k)/2)).at(((x+v_x+l)/2));
+            }
+                //channel_values.at((y+k)/scale_factor).at((x+l)/scale_factor) = OG.at((y+k)/scale_factor).at((x+l)/scale_factor) - last_frame.at(((y+v_y+k)/scale_factor)).at(((x+v_x+l)/scale_factor));
+                
     }
 
-    return channel_values;
+    //Y.at(y+k).at(x+l) = OG_Y.at(y+k).at(x+l) - last_Y.at(y+v_y+k).at(x+v_x+l);
+    return {Y,Cb,Cr};
 }
 
 
@@ -341,9 +336,7 @@ int main(int argc, char** argv){
 
             auto motion_vectors = find_motion_vectors(height,width);
 
-            Y = motion_vector_deltas(motion_vectors,Y,0);
-            Cb = motion_vector_deltas(motion_vectors,Cb,1);
-            Cr = motion_vector_deltas(motion_vectors,Cr,2);
+            std::tie(Y,Cb,Cr) = motion_vector_deltas(motion_vectors,Y,Cb,Cr);
 
             write_variable_bits(motion_vectors.size());
             for(unsigned int i =0; i<motion_vectors.size(); i++)
@@ -375,46 +368,23 @@ int main(int argc, char** argv){
         write_variable_bits(ZigZag_Cr.size());
 
 
-        //delta comp
-        // int prev = ZigZag_Y.at(0);
-        // for(unsigned int i =1; i<ZigZag_Y.size(); i++){
-        //     if(i%64>6){
-        //         ZigZag_Y.at(i)-=prev;
-        //         prev+=ZigZag_Y.at(i);
-        //     }else
-        //         prev = ZigZag_Y.at(i);
-        // }
-
-        if(frame_num==2){
-            for(int j = 1; j < 50; j++){
-                for(int i =64*j; i<64*(j+1); i++){
-                    debugfile << ZigZag_Y.at(i)+0.0 << " ";
-                }
-                debugfile << std::endl;
-            }
-                
-                    
-        }
-            
 
         //Write ZigZag values in variable bit format with rle
         int rl =0;
         int total_y = 0;
         total_y+=write_variable_bits(ZigZag_Y.at(0));
-        debugfile << "bits used for 1st element" << total_y;
         for(unsigned int i =1; i<ZigZag_Y.size(); i++){
 
 
             if(ZigZag_Y.at(i) == ZigZag_Y.at(i-1)){
                 rl++;
             }else{
-                debugfile << "run" << rl;
+                
                 total_y += write_variable_bits(rl);
                 write_variable_bits(ZigZag_Y.at(i));
                 rl=0;
             }
-            if(i==64 && frame_num==2)
-                debugfile << "bits used for 1 block: " << total_y;
+            
         }
         write_variable_bits(rl);
         rl =0;
