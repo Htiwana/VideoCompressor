@@ -1,20 +1,3 @@
-/* uvid_compress.cpp
-   CSC 485B/578B/SENG 480B - Data Compression - Summer 2020
-
-   Starter code for Assignment 5
-
-   Reads video data from stdin in uncompresed YCbCr (YUV) format 
-   (With 4:2:0 subsampling). To produce this format from 
-   arbitrary video data in a popular format, use the ffmpeg
-   tool and a command like 
-
-     ffmpeg -i videofile.mp4 -f rawvideo -pixel_format yuv420p - 2>/dev/null | ./this_program <width> height>
-
-   Note that since the width/height of each frame is not encoded into the raw
-   video stream, those values must be provided to the program as arguments.
-
-   B. Bird - 07/15/2020
-*/
 
 #include <iostream>
 #include <fstream>
@@ -25,7 +8,6 @@
 #include <tuple>
 #include "output_stream.hpp"
 #include "yuv_stream.hpp"
-#include "bitmap_image.hpp"
 #include "uv_common.hpp"
 #include <cmath>
 
@@ -140,23 +122,7 @@ int write_variable_bits(int val){
 }
 
 
-int rle(int index, std::vector<double> vec){
-
-    int cur_block = index/64;
-    int block_end = (cur_block+1)*64;
-
-    int run_length=0;
-    for(int i = index+1; i< block_end; i++){
-        if(vec.at(i)==vec.at(index)){
-            run_length++;
-        }else{
-            return run_length;
-        }
-    }
-
-    return run_length;
-}
-
+//not acutlaly mean just squared diffrences between two macroblocks
 double mean_square_diff(int y,int x,int p_y, int p_x){
     double msd=0;
 
@@ -176,35 +142,47 @@ double mean_square_diff(int y,int x,int p_y, int p_x){
 
 }
 
+int index_clamp(int index, int dim_max){
+
+    if(index >= (dim_max-mblock_size))
+        return dim_max-mblock_size-1;
+    else if(index <0 )
+        return 0;
+    else
+        return index;
+}
+
 std::vector<std::vector<int>> find_motion_vectors(u32 height, u32 width){
 
     std::vector<std::vector<int>> motion_vectors;
 
-        //iterate over blocks within a sub area of the frame
-        for(unsigned int y = mblock_size*search_radius; y < (height-(mblock_size*search_radius)); y+=mblock_size){
-            for (unsigned int x = mblock_size*search_radius; x < (width-(mblock_size*search_radius)); x+=mblock_size){
+        //loop over entire frame macro-block by macro-block
+        for(int y = 0; y < height-mblock_size; y+=mblock_size){
+            for (int x = 0; x < width-mblock_size; x+=mblock_size){
 
                 
                 double lowest_sq_diff = mean_square_diff(y,x,y,x);
                 std::vector<int> motion_v = {0,0,0,0};
 
+                //for each macroblock check all neighbouring blocks in fixed radius and store motion vec if better than 0
                 for(int i = -(mblock_size*search_radius); i<=mblock_size*search_radius; i+=mblock_size){
                     for(int j = -mblock_size*search_radius; j<=mblock_size*search_radius; j+=mblock_size){
 
-                        double sq_diff = mean_square_diff(y,x,y+i,x+j);
 
+                        int v_y = index_clamp(y+i,height);
+                        int v_x = index_clamp(x+j,width);
+                        
+                        double sq_diff = mean_square_diff(y,x,v_y,v_x);
 
                         if(sq_diff < lowest_sq_diff){
                             lowest_sq_diff = sq_diff;
-                            motion_v = { (int)y, (int)x, i,j};  
+                            motion_v = { (int)y, (int)x, v_y-y,v_x-x};  
                         }
                     }
                 }
-                if(motion_v.at(0)!=0){
+                //if non zero motion vector
+                if(motion_v.at(2)!=0)
                     motion_vectors.push_back(motion_v);
-                    //debugfile << "(" << motion_v.at(2) << "," << motion_v.at(4) << ")" ;
-                }
-                    
             }
         }
     
@@ -213,10 +191,6 @@ std::vector<std::vector<int>> find_motion_vectors(u32 height, u32 width){
 
 std::tuple<std::vector<std::vector<double>>, std::vector<std::vector<double>>, std::vector<std::vector<double>>> 
 motion_vector_deltas(std::vector<std::vector<int>> motion_vectors, std::vector<std::vector<double>> Y,std::vector<std::vector<double>> Cb,std::vector<std::vector<double>> Cr){
-
-
-
-
 
     for(auto v: motion_vectors){
         int y = v.at(0);
@@ -230,12 +204,31 @@ motion_vector_deltas(std::vector<std::vector<int>> motion_vectors, std::vector<s
                 Cb.at((y+k)/2).at((x+l)/2) = OG_Cb.at((y+k)/2).at((x+l)/2) - last_Cb.at(((y+v_y+k)/2)).at(((x+v_x+l)/2));
                 Cr.at((y+k)/2).at((x+l)/2) = OG_Cr.at((y+k)/2).at((x+l)/2) - last_Cr.at(((y+v_y+k)/2)).at(((x+v_x+l)/2));
             }
-                //channel_values.at((y+k)/scale_factor).at((x+l)/scale_factor) = OG.at((y+k)/scale_factor).at((x+l)/scale_factor) - last_frame.at(((y+v_y+k)/scale_factor)).at(((x+v_x+l)/scale_factor));
                 
     }
 
-    //Y.at(y+k).at(x+l) = OG_Y.at(y+k).at(x+l) - last_Y.at(y+v_y+k).at(x+v_x+l);
     return {Y,Cb,Cr};
+}
+
+int write_rle(std::vector<double> vec){
+
+    int rl =0;
+    write_variable_bits(vec.at(0));
+    for(unsigned int i =1; i<vec.size(); i++){
+
+
+        if(vec.at(i) == vec.at(i-1)){
+            rl++;
+        }else{
+            write_variable_bits(rl);
+            write_variable_bits(vec.at(i));
+            rl=0;
+        }
+        
+    }
+    write_variable_bits(rl);
+
+    return 0;
 }
 
 
@@ -246,7 +239,7 @@ int main(int argc, char** argv){
     debugfile.open ("DEBUG.txt");
 
     if (argc < 4){
-        std::cerr << "Usage: " << argv[0] << " <width> <height> <low/medium/high>" << std::endl;
+        std::cerr << "Usage: " << argv[0] << " <width> <height> <vlow/low/medium/high>" << std::endl;
         return 1;
     }
 
@@ -262,7 +255,10 @@ int main(int argc, char** argv){
 
 
     unsigned int quantization_factor = 0;
-    if(quality =="low"){
+
+    if(quality=="vlow"){
+        quantization_factor = 4;
+    }else if(quality =="low"){
         quantization_factor =1;
     }else if(quality == "medium"){
         quantization_factor =2;
@@ -270,7 +266,7 @@ int main(int argc, char** argv){
         quantization_factor =3;
     }
     
-    output_stream.push_bits(quantization_factor,2);
+    output_stream.push_bits(quantization_factor,3);
     
     double q_factor = 0;
     switch(quantization_factor){
@@ -282,6 +278,9 @@ int main(int argc, char** argv){
             break;
         case 3:
             q_factor = 0.5;
+            break;
+        case 4:
+            q_factor = 6;
             break;
     }
 
@@ -295,8 +294,7 @@ int main(int argc, char** argv){
     while (reader.read_next_frame()){
 
         frame_num++;
-        frame_type = (frame_num%6==0)?0:1;// 0 = I frame, 1 = P frame
-        //frame_type =1;
+        frame_type = (frame_num%10==0)?0:1;// 0 = I frame, 1 = P frame
 
         output_stream.push_byte(1); //Use a one byte flag to indicate whether there is a frame here
         
@@ -326,18 +324,26 @@ int main(int argc, char** argv){
 
         auto motion_vectors = find_motion_vectors(height,width);
 
+
         if(frame_type){//if p frame
+
+            //lines 361 to 363 seem to fix accumulating artifacts that look like delta value deterioration ....seems excessive to encode/decode current frame too but it works
             OG_Y = reverse_DCT(DCT(OG_Y,height,width,0,q_factor),height,width,0,q_factor);
             OG_Cb = reverse_DCT(DCT(OG_Cb,height/2,width/2,0,q_factor),height/2,width/2,0,q_factor);
-            OG_Cr = reverse_DCT(DCT(OG_Cr,height/2,width/2,0,q_factor),height/2,width/2,0,q_factor);     
+            OG_Cr = reverse_DCT(DCT(OG_Cr,height/2,width/2,0,q_factor),height/2,width/2,0,q_factor);  
+
+            //compute deltas for all values in frame ( same effect as doing all blocks, block by block)
             Y = minus(OG_Y,last_Y);
             Cb = minus(OG_Cb,last_Cb);
             Cr = minus(OG_Cr,last_Cr);
 
+            //compute macro-block wise motion vectors 
             auto motion_vectors = find_motion_vectors(height,width);
 
+            //recompute deltas for macro-blocks with better than 0 motion vectors
             std::tie(Y,Cb,Cr) = motion_vector_deltas(motion_vectors,Y,Cb,Cr);
 
+            //write motion vectors
             write_variable_bits(motion_vectors.size());
             for(unsigned int i =0; i<motion_vectors.size(); i++)
                 for(unsigned int j =0; j<4; j++)
@@ -349,16 +355,13 @@ int main(int argc, char** argv){
             Cr = OG_Cr;
         }
 
-
-            
-        
-        
+     
         //DCT for each plane
         auto DCT_Y = DCT(Y,height,width,0, q_factor);     
         auto DCT_Cb = DCT(Cb,(height+1)/2,(width+1)/2,1,q_factor);
         auto DCT_Cr = DCT(Cr,(height+1)/2,(width+1)/2,1,q_factor);
 
-
+        //flatten each channel in zig zag order
         auto ZigZag_Y = ZigZagOrder(DCT_Y,height,width);        
         auto ZigZag_Cb = ZigZagOrder(DCT_Cb,(height+1)/2,(width+1)/2);
         auto ZigZag_Cr = ZigZagOrder(DCT_Cr,(height+1)/2,(width+1)/2);
@@ -367,54 +370,10 @@ int main(int argc, char** argv){
         write_variable_bits(ZigZag_Cb.size());
         write_variable_bits(ZigZag_Cr.size());
 
-
-
         //Write ZigZag values in variable bit format with rle
-        int rl =0;
-        int total_y = 0;
-        total_y+=write_variable_bits(ZigZag_Y.at(0));
-        for(unsigned int i =1; i<ZigZag_Y.size(); i++){
-
-
-            if(ZigZag_Y.at(i) == ZigZag_Y.at(i-1)){
-                rl++;
-            }else{
-                
-                total_y += write_variable_bits(rl);
-                write_variable_bits(ZigZag_Y.at(i));
-                rl=0;
-            }
-            
-        }
-        write_variable_bits(rl);
-        rl =0;
-
-        write_variable_bits(ZigZag_Cb.at(0));
-        for(unsigned int i =1; i<ZigZag_Cb.size(); i++){
-
-            if(ZigZag_Cb.at(i) == ZigZag_Cb.at(i-1)){
-                rl++;
-            }else{
-                write_variable_bits(rl);
-                write_variable_bits(ZigZag_Cb.at(i));
-                rl=0;
-            }
-        }
-        write_variable_bits(rl);
-        rl=0;
-
-        write_variable_bits(ZigZag_Cr.at(0));
-        for(unsigned int i =1; i<ZigZag_Cr.size(); i++){
-
-            if(ZigZag_Cr.at(i) == ZigZag_Cr.at(i-1)){
-                rl++;
-            }else{
-                write_variable_bits(rl);
-                write_variable_bits(ZigZag_Cr.at(i));
-                rl=0;
-            }
-        }
-        write_variable_bits(rl);
+        write_rle(ZigZag_Y);
+        write_rle(ZigZag_Cb);
+        write_rle(ZigZag_Cr);
 
         //compute last frame vlaues that decompressor will obtain by doing and undoing DCT on orginal values
         OG_Y = DCT(OG_Y,height,width,0,q_factor);

@@ -12,6 +12,7 @@
 
 #include <vector>
 #include <string>
+#include <cmath>
 
 
 //https://www.mathworks.com/help/images/ref/dctmtx.html

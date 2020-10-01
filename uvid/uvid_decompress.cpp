@@ -1,19 +1,4 @@
-/* uvid_decompress.cpp
-   CSC 485B/578B/SENG 480B - Data Compression - Summer 2020
 
-   Starter code for Assignment 5
-   
-   This placeholder code reads the (basically uncompressed) data produced by
-   the uvid_compress starter code and outputs it in the uncompressed 
-   YCbCr (YUV) format used for the sample video input files. To play the 
-   the decompressed data stream directly, you can pipe the output of this
-   program to the ffplay program, with a command like 
-
-     ffplay -f rawvideo -pixel_format yuv420p -framerate 30 -video_size 352x288 - 2>/dev/null
-   (where the resolution is explicitly given as an argument to ffplay).
-
-   B. Bird - 07/15/2020
-*/
 
 #include <iostream>
 #include <fstream>
@@ -132,12 +117,14 @@ int read_variable_bits(){
 
 int main(int argc, char** argv){
  
+    std::ofstream debugfile;
+    debugfile.open("DEBUG.txt");
     
 
     u32 height {input_stream.read_u32()};
     u32 width {input_stream.read_u32()};
 
-    unsigned int quantization_factor = input_stream.read_bits(2);
+    unsigned int quantization_factor = input_stream.read_bits(3);
 
     double q_factor = 0;
     switch(quantization_factor){
@@ -149,6 +136,9 @@ int main(int argc, char** argv){
             break;
         case 3:
             q_factor = 0.5;
+            break;
+        case 4:
+            q_factor = 6;
             break;
     }
 
@@ -168,6 +158,7 @@ int main(int argc, char** argv){
 
         std::vector<std::vector<int>> motion_vectors;
         std::vector<int> motion_v;
+
         //motion vectors
         if(frame_type){
             unsigned int motion_vector_size = read_variable_bits();
@@ -195,9 +186,6 @@ int main(int argc, char** argv){
         std::vector<double> ZigZag_Cb;
         std::vector<double> ZigZag_Cr;
 
-        std::ofstream debugfile;
-        debugfile.open ("decode_debug_.txt");
-
 
         for(unsigned int i =0; i<ZigZag_Y_size; i++){
             int val = read_variable_bits();
@@ -208,11 +196,7 @@ int main(int argc, char** argv){
                 ZigZag_Y.push_back(val);
                 i++;
             }
-            
         }
-
-
-
         for(unsigned int i =0; i<ZigZag_Cb_size; i++){
             int val = read_variable_bits();
             ZigZag_Cb.push_back(val);
@@ -258,8 +242,6 @@ int main(int argc, char** argv){
             Cr_scaled = plus(Cr_scaled,last_Cr);
             Cb_scaled = plus(Cb_scaled,last_Cb);
 
-
-
             for(auto v: motion_vectors){
                 int y = v.at(0);
                 int x = v.at(1);
@@ -275,6 +257,8 @@ int main(int argc, char** argv){
                 }
             }
         }
+
+        debugfile << " MV: " << motion_vectors.size() << std::endl;
 
         for (u32 y = 0; y < height; y++)
             for (u32 x = 0; x < width; x++)

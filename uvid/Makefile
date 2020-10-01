@@ -12,4 +12,4 @@ uvid_decompress: uvid_decompress.o
 
 
 clean:
-	rm -f uvid_compress uvid_decompress *.o
+	rm -f uvid_compress uvid_decompress *.o compressed.uvi decompressed.y4m DEBUG.txt *.uvi *.y4m
